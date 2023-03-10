@@ -1,0 +1,109 @@
+
+import json
+import boto3
+import logging
+import datetime
+import time
+
+
+eventbridge = boto3.client('events')
+s3 = boto3.client('s3')
+ 
+def lambda_handler(event, context):
+    start_time = time.time()
+    s3 = boto3.resource('s3')
+    bucket = s3.Bucket('knative-logs')
+    obj = s3.Object('knative-logs', 'logs-insights-results.csv')
+    incoming_request_time = datetime.datetime.now()
+    logging.info(f"Incoming request time: {incoming_request_time}")
+
+    data = event
+    print(event)
+    
+    temperature_event = {
+        "Ce-Type": "temperature",
+        "Ce-Specversion": "1.0",
+        "Ce-Source": "poc",
+        "Ce-Id": "1",
+        "request_time": incoming_request_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "BeaconId": data["BeaconId"],
+        "Date": data["Date"],
+        "Temperature": data["TemperatureData"]["Temperature"]
+    }
+    
+    battery_event = {
+        "Ce-Type": "battery",
+        "Ce-Specversion": "1.0",
+        "Ce-Source": "poc",
+        "Ce-Id": "1", 
+        "request_time": incoming_request_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "BeaconId": data["BeaconId"],
+        "Date": data["Date"],
+        "Battery": data["BatteryData"]["Voltage"]
+    }
+
+    response = eventbridge.put_events(
+        Entries=[
+            {
+                'Detail': json.dumps(temperature_event),
+                'DetailType': 'temperature',
+                'Source': 'poc',
+                'EventBusName': 'kn-eventbus'
+            },
+            {
+                'Detail': json.dumps(battery_event),
+                'DetailType': 'battery',
+                'Source': 'poc',
+                'EventBusName': 'kn-eventbus'
+            }
+        ]
+    )
+    #dinesh
+    response_time1 = time.time()
+    response_difference = response_time1 -  start_time
+    print(response_difference)
+    
+    
+    #previous code
+    response_time = datetime.datetime.now()
+    logging.info(f"Response time: {response_time}")
+    latency = response_time - incoming_request_time
+    latency_in_seconds = latency.total_seconds()
+    
+    response_data = {
+        'request_time': incoming_request_time.strftime("%Y-%m-%d %H:%M:%S"),
+        'response_time': response_time.strftime("%Y-%m-%d %H:%M:%S"),
+        #'latency': latency_in_seconds,
+        'latency' : response_difference,
+        #'response': response,
+    }
+    
+    field_names = ["request-time", "response-time", "Latency"]
+    data = [{"request-time": response_data["request_time"],
+             "response-time": response_data["response_time"],
+             "Latency": str(response_data["latency"]),}]
+    
+    try:
+        contents = obj.get()['Body'].read().decode('utf-8')
+        contents = contents.splitlines()
+    except:
+        contents = []
+
+    # Write the header row to the file
+    header_row = ",".join(field_names)
+    if not contents:
+        contents.append(header_row)
+
+    # Write the data rows to the file
+    for d in data:
+        data_row = ",".join([d[field] for field in field_names])
+        contents.append(data_row)
+    contents = "\n".join(contents)
+    obj.put(Body=contents.encode('utf-8'))
+    return {
+        'statusCode': 200,
+        'body': json.dumps(response_data)
+    }
+
+
+   
